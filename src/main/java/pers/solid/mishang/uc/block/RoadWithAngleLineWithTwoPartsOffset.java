@@ -1,0 +1,106 @@
+package pers.solid.mishang.uc.block;
+
+import net.minecraft.core.Direction;
+import net.minecraft.data.models.model.*;
+import net.minecraft.data.models.blockstates.*;
+import net.minecraft.data.models.BlockModelGenerators;
+import net.minecraft.data.models.blockstates.MultiVariantGenerator;
+import net.minecraft.data.models.blockstates.PropertyDispatch;
+import net.minecraft.data.models.blockstates.Variant;
+import net.minecraft.data.models.blockstates.VariantProperties;
+import net.minecraft.data.recipes.RecipeBuilder;
+import net.minecraft.data.recipes.RecipeCategory;
+import net.minecraft.data.recipes.RecipeProvider;
+import net.minecraft.data.recipes.ShapedRecipeBuilder;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+import org.jetbrains.annotations.ApiStatus;
+import pers.solid.mishang.uc.MishangUtils;
+import pers.solid.mishang.uc.data.FasterTextureMap;
+import pers.solid.mishang.uc.data.MishangucTextureKeys;
+import pers.solid.mishang.uc.util.LineColor;
+import pers.solid.mishang.uc.util.LineOffset;
+import pers.solid.mishang.uc.util.LineType;
+import pers.solid.mishang.uc.util.RoadConnectionState;
+
+@ApiStatus.AvailableSince("1.1.0")
+public interface RoadWithAngleLineWithTwoPartsOffset extends RoadWithAngleLine {
+  int offsetOutwards();
+
+  @Override
+  default RoadConnectionState getConnectionStateOf(BlockState state, Direction direction) {
+    final RoadConnectionState connectionState = RoadWithAngleLine.super.getConnectionStateOf(state, direction);
+    if (connectionState.mayConnect()) {
+      return connectionState.createWithOffset(LineOffset.of(state.getValue(FACING).getDirectionInAxis(direction.getClockWise().getAxis()).getOpposite(), offsetOutwards()));
+    } else {
+      return connectionState;
+    }
+  }
+
+  class Impl extends RoadWithAngleLine.Impl implements RoadWithAngleLineWithTwoPartsOffset {
+    protected final String lineSide;
+    protected final String lineSide2;
+    private final int offsetOutwards;
+
+    public Impl(Properties settings, LineColor lineColor, LineType lineType, boolean isBevel, String lineTop, String lineSide, String lineSide2, int offsetOutwards) {
+      super(settings, lineColor, lineType, isBevel, lineTop);
+      this.lineSide = lineSide;
+      this.lineSide2 = lineSide2;
+      this.offsetOutwards = offsetOutwards;
+    }
+
+    @Override
+    public int offsetOutwards() {
+      return offsetOutwards;
+    }
+
+    @Override
+    protected <B extends Block & Road> void registerBaseOrSlabModels(B road, BlockModelGenerators blockStateModelGenerator) {
+      final FasterTextureMap textures = new FasterTextureMap().base("asphalt")
+          .lineSide(lineSide)
+          .lineSide2(lineSide2)
+          .lineTop(lineTop);
+      final ResourceLocation modelId = road.uploadModel("_with_angle_line", textures, blockStateModelGenerator, MishangucTextureKeys.BASE, MishangucTextureKeys.LINE_SIDE, MishangucTextureKeys.LINE_SIDE2, MishangucTextureKeys.LINE_TOP);
+      blockStateModelGenerator.blockStateOutput.accept(road.composeState(MultiVariantGenerator.multiVariant(road, Variant.variant().with(VariantProperties.MODEL, modelId)).with(PropertyDispatch.property(FACING).generate(direction -> Variant.variant().with(MishangUtils.INT_Y_VARIANT, direction.asRotation() - 45)))));
+    }
+
+    private static final String[] OUTER_OFFSET_BEVEL_PATTERN = {
+        "**X",
+        "*X ",
+        " X "
+    };
+    private static final String[] INNER_OFFSET_BEVEL_PATTERN = {
+        " *X",
+        " X ",
+        " X "
+    };
+    private static final String[] OUTER_OFFSET_RIGHT_ANGLE_PATTERN = {
+        "** ",
+        "*XX",
+        "X  "
+    };
+    private static final String[] INNER_OFFSET_RIGHT_ANGLE_PATTERN = {
+        " * ",
+        "*XX",
+        "X  "
+    };
+
+    @Override
+    public RecipeBuilder getPaintingRecipe(Block base, Block self) {
+      final String[] patterns = switch (offsetOutwards) {
+        case 2 -> isBevel() ? OUTER_OFFSET_BEVEL_PATTERN : OUTER_OFFSET_RIGHT_ANGLE_PATTERN;
+        case -2 -> isBevel() ? INNER_OFFSET_BEVEL_PATTERN : INNER_OFFSET_RIGHT_ANGLE_PATTERN;
+        default -> throw new IllegalStateException("Unexpected value: " + offsetOutwards);
+      };
+      return ShapedRecipeBuilder.shaped(RecipeCategory.BUILDING_BLOCKS, self, 3)
+          .pattern(patterns[0])
+          .pattern(patterns[1])
+          .pattern(patterns[2])
+          .define('*', lineColor.getIngredient())
+          .define('X', base)
+          .unlockedBy("has_paint", RecipeProvider.has(lineColor.getIngredient()))
+          .unlockedBy(RecipeProvider.getHasName(base), RecipeProvider.has(base));
+    }
+  }
+}

@@ -1,0 +1,48 @@
+# gradle
+
+.gradle/
+build/
+out/
+classes/
+
+# eclipse
+
+*.launch
+
+# idea
+
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# vscode
+
+.settings/
+.vscode/
+bin/
+.classpath
+.project
+
+# macos
+
+*.DS_Store
+
+# fabric
+
+run/
+/icon.xcf
+/icon-large.png
+/icon-wide.png
+
+docs/
+
+/token.txt
+/apiKey.txt
+
+# porting workspace: reference sources, backups and build logs (not part of the port)
+/_forge_src/
+/_yarn-src-backup/
+/_backup_old_jar/
+/_forge_NamespacedWrapper.txt
+*.log

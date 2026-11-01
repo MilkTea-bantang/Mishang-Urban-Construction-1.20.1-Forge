@@ -1,0 +1,155 @@
+package pers.solid.mishang.uc.item;
+
+import org.jetbrains.annotations.ApiStatus;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import pers.solid.mishang.uc.util.TextBridge;
+
+import java.util.Collections;
+import java.util.List;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.BlockSource;
+import net.minecraft.core.dispenser.DispenseItemBehavior;
+import net.minecraft.core.particles.ParticleTypes;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.InteractionResultHolder;
+import net.minecraft.world.entity.AgeableMob;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.monster.Slime;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.TooltipFlag;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.DispenserBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.IntegerProperty;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
+
+@ApiStatus.AvailableSince("0.2.4")
+public class GrowthToolItem extends Item implements InteractsWithEntity, MishangucItem, DispenseItemBehavior {
+  public GrowthToolItem(Properties settings) {
+    super(settings);
+    DispenserBlock.registerBehavior(this, this);
+  }
+
+  @Override
+  public void appendHoverText(ItemStack stack, @Nullable Level world, List<Component> tooltip, TooltipFlag context) {
+    super.appendHoverText(stack, world, tooltip, context);
+    tooltip.add(TextBridge.translatable("item.mishanguc.growth_tool.tooltip.1").withStyle(ChatFormatting.GRAY));
+    tooltip.add(TextBridge.translatable("item.mishanguc.growth_tool.tooltip.2").withStyle(ChatFormatting.GRAY));
+    tooltip.add(TextBridge.translatable("item.mishanguc.growth_tool.tooltip.3").withStyle(ChatFormatting.GRAY));
+  }
+
+  @Override
+  public InteractionResultHolder<ItemStack> use(Level world, Player user, InteractionHand hand) {
+    final InteractionResultHolder<ItemStack> use = super.use(world, user, hand);
+    if (world.isClientSide) {
+      return InteractionResultHolder.success(use.getObject());
+    }
+    final HitResult raycast = user.pick(64, 0, true);
+    if (raycast.getType() == HitResult.Type.MISS) {
+      return InteractionResultHolder.fail(use.getObject());
+    }
+    final Vec3 center = raycast.getLocation();
+    final int damage = apply(world, center, !user.isShiftKeyDown());
+    user.getItemInHand(hand).hurtAndBreak(damage, user, playerEntity -> playerEntity.broadcastBreakEvent(hand));
+    return damage > 0 ? InteractionResultHolder.success(use.getObject()) : InteractionResultHolder.fail(use.getObject());
+  }
+
+  @Override
+  public boolean canAttackBlock(BlockState state, Level world, BlockPos pos, Player miner) {
+    if (super.canAttackBlock(state, world, pos, miner) && !world.isClientSide) {
+      final int damage = apply(world, Vec3.atCenterOf(pos), !miner.isShiftKeyDown());
+      miner.getItemInHand(InteractionHand.MAIN_HAND).hurtAndBreak(damage, miner, playerEntity -> playerEntity.broadcastBreakEvent(InteractionHand.MAIN_HAND));
+    }
+    return false;
+  }
+
+  public static int apply(Level world, Vec3 center, boolean isPositive) {
+    int damage = 0;
+    for (BlockPos pos : BlockPos.withinManhattan(BlockPos.containing(center), 4, 4, 4)) {
+      final BlockState blockState = world.getBlockState(pos);
+      if (blockState.getBlock().getStateDefinition().getProperty("age") instanceof IntegerProperty intProperty) {
+        final Integer target = isPositive ? Collections.max(intProperty.getPossibleValues()) : Collections.min(intProperty.getPossibleValues());
+        if (!blockState.getValue(intProperty).equals(target)) {
+          world.setBlockAndUpdate(pos, blockState.setValue(intProperty, target));
+          createParticle(world, Vec3.atCenterOf(pos), isPositive);
+          damage += 1;
+        }
+      }
+    }
+    final List<Entity> entities = world.getEntitiesOfClass(Entity.class, AABB.ofSize(center, 9, 9, 9));
+    for (Entity entity : entities) {
+      if (entity instanceof Slime slimeEntity) {
+        final int prevSize = slimeEntity.getSize();
+        final int newSize;
+        if (isPositive) {
+          newSize = Math.min(prevSize + 1, 8);
+        } else {
+          newSize = Math.max(1, prevSize - 1);
+        }
+        if (prevSize != newSize) {
+          slimeEntity.setSize(newSize, true);
+          createParticle(world, entity.position(), isPositive);
+          damage += 1;
+        }
+      } else if (entity instanceof AgeableMob passiveEntity) {
+        if (passiveEntity.isBaby() == isPositive) {
+          passiveEntity.setAge(isPositive ? 0 : AgeableMob.BABY_START_AGE);
+          createParticle(world, entity.position(), isPositive);
+          damage += 1;
+        }
+      } else if (entity instanceof Mob mobEntity) {
+        if (mobEntity.isBaby() == isPositive) {
+          mobEntity.setBaby(!isPositive);
+          createParticle(world, entity.position(), isPositive);
+          damage += 1;
+        }
+      }
+    }
+    return damage;
+  }
+
+  public static void createParticle(Level world, Vec3 pos, boolean isPositive) {
+    if (world instanceof ServerLevel serverWorld) {
+      serverWorld.sendParticles(isPositive ? ParticleTypes.HAPPY_VILLAGER : ParticleTypes.SMOKE, pos.x, pos.y, pos.z, 16, 1, 1, 1, 0);
+    }
+  }
+
+
+  @Override
+  public @NotNull InteractionResult useEntityCallback(Player player, Level world, InteractionHand hand, Entity entity, @Nullable EntityHitResult hitResult) {
+    if (player instanceof LocalPlayer) return InteractionResult.CONSUME;
+    final int damage = apply(world, hitResult == null ? entity.position() : hitResult.getLocation(), !player.isShiftKeyDown());
+    player.getItemInHand(hand).hurtAndBreak(damage, player, playerEntity -> playerEntity.broadcastBreakEvent(hand));
+    return damage > 0 ? InteractionResult.SUCCESS : InteractionResult.FAIL;
+  }
+
+  @Override
+  public @NotNull InteractionResult attackEntityCallback(Player player, Level world, InteractionHand hand, Entity entity, @Nullable EntityHitResult hitResult) {
+    final InteractionResult actionResult = InteractsWithEntity.super.attackEntityCallback(player, world, hand, entity, hitResult);
+    if (actionResult == InteractionResult.PASS && !world.isClientSide) {
+      final int damage = apply(world, hitResult == null ? entity.position() : hitResult.getLocation(), !player.isShiftKeyDown());
+      player.getItemInHand(hand).hurtAndBreak(damage, player, playerEntity -> playerEntity.broadcastBreakEvent(hand));
+      return InteractionResult.SUCCESS;
+    }
+    return actionResult;
+  }
+
+  @Override
+  public ItemStack dispense(BlockSource pointer, ItemStack stack) {
+    final int damage = apply(pointer.getLevel(), pointer.getPos().relative(pointer.getBlockState().getValue(DispenserBlock.FACING), 4).getCenter(), true);
+    stack.hurt(damage, pointer.getLevel().random, null);
+    return stack;
+  }
+}
